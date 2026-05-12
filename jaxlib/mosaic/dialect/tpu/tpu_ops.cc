@@ -1372,6 +1372,13 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
+void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
+                              Value semaphore, Value amount, Value device_id,
+                              Value core_id) {
+  build(builder, state, semaphore, amount, device_id, core_id,
+        /*subcore_id=*/nullptr);
+}
+
 mlir::tpu::CoreType SemaphoreSignalOp::getTargetCoreType() {
   return getRefCoreType(getSemaphore()).value_or(GetCoreTypeOfParentOp(**this));
 }
@@ -1405,6 +1412,13 @@ LogicalResult SemaphoreWaitOp::verify() {
   return success();
 }
 
+void EnqueueDMAOp::build(OpBuilder& builder, OperationState& state,
+                         Value source, Value source_semaphore, Value target,
+                         Value target_semaphore, Value device_id, Value core_id,
+                         uint32_t priority = 0, bool strict_ordering = false) {
+  build(builder, state, source, source_semaphore, target, target_semaphore,
+        device_id, core_id, /*subcore_id=*/nullptr, priority, strict_ordering);
+}
 mlir::tpu::CoreType EnqueueDMAOp::getTargetCoreType() {
   return getRefCoreType(getTargetSemaphore())
       .value_or(GetCoreTypeOfParentOp(**this));
@@ -1495,6 +1509,12 @@ LogicalResult EnqueueDMAOp::verify() {
       return emitOpError(
           "Non-DMA semaphores are not supported for DMAs involving SMEM");
     }
+  }
+  // Subcore ID applies only to SC vector subcore DMAs.
+  if (target_core == CoreType::kTc && getSubcoreId() != nullptr) {
+    return emitOpError(
+        "Subcore id should not be set unless DMA target core "
+        "type is SC vector subcore");
   }
   return success();
 }

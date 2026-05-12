@@ -122,10 +122,61 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
                 mlir::IntegerAttr::get(
                     mlir::IntegerType::get(op->getContext(), 32), 0));
   }
+  if (version < 14) {
+    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!segment_attr) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    SmallVector<int32_t> new_sizes(segment_attr.asArrayRef());
+    if (new_sizes.size() != 6) {
+      return op->emitError(
+          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
+    }
+    new_sizes.push_back(0);
+    op->setAttr(OpTrait::AttrSizedOperandSegments<
+                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+    auto core_id_attr = op->getAttrOfType<IntegerAttr>("core_id");
+    CoreType core_type = GetCoreTypeOfParentOp(*op);
+    if ((core_id_attr != nullptr) &&
+        (core_type == CoreType::kScVectorSubcore)) {
+      const int32_t num_subcores = 16;
+      const int32_t subcore_id = core_id_attr.getInt() % num_subcores;
+      op->setAttr("core_id",
+                  mlir::IntegerAttr::get(
+                      mlir::IntegerType::get(op->getContext(), 8),
+                      core_id_attr.getInt() / num_subcores));
+      op->setAttr("subcore_id",
+                  mlir::IntegerAttr::get(
+                      mlir::IntegerType::get(op->getContext(), 8), subcore_id));
+    }
+  }
   return success();
 }
 
 LogicalResult enqueue_dma_downgrade(Operation* op, int version, bool&) {
+  if (version < 14) {
+    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!segment_attr) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
+    if (sizes.size() != 7) {
+      return op->emitError(
+          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
+    }
+    if (sizes[6] != 0) {
+      return op->emitError(
+          "Cannot downgrade enqueue_dma with subcore_id to version < 14");
+    }
+    op->setAttr(OpTrait::AttrSizedOperandSegments<
+                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                DenseI32ArrayAttr::get(op->getContext(), sizes.drop_back()));
+  }
   if (version < 12) {
     auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -249,10 +300,58 @@ LogicalResult semaphore_signal_upgrade(Operation* op, int version, bool&) {
       return op->emitError("Unexpected operand count in tpu.semaphore_signal");
     }
   }
+  if (version < 14) {
+    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (segment_attr) {
+      SmallVector<int32_t> new_sizes(segment_attr.asArrayRef());
+      if (new_sizes.size() == 4) {
+        new_sizes.push_back(0);
+        op->setAttr(OpTrait::AttrSizedOperandSegments<
+                        EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                    DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+      }
+    }
+    auto core_id_attr = op->getAttrOfType<IntegerAttr>("core_id");
+    CoreType core_type = GetCoreTypeOfParentOp(*op);
+    if ((core_id_attr != nullptr) &&
+        (core_type == CoreType::kScVectorSubcore)) {
+      const int32_t num_subcores = 16;
+      const int32_t subcore_id = core_id_attr.getInt() % num_subcores;
+      op->setAttr("core_id",
+                  mlir::IntegerAttr::get(
+                      mlir::IntegerType::get(op->getContext(), 8),
+                      core_id_attr.getInt() / num_subcores));
+      op->setAttr("subcore_id",
+                  mlir::IntegerAttr::get(
+                      mlir::IntegerType::get(op->getContext(), 8), subcore_id));
+    }
+  }
   return success();
 }
 
 LogicalResult semaphore_signal_downgrade(Operation* op, int version, bool&) {
+  if (version < 14) {
+    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!segment_attr) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
+    if (sizes.size() != 5) {
+      return op->emitError(
+          "Unexpected size of AttrSizedOperandSegments for semaphore_signal");
+    }
+    if (sizes[4] != 0) {
+      return op->emitError(
+          "Cannot downgrade semaphore_signal with subcore_id to version < 14");
+    }
+    op->setAttr(OpTrait::AttrSizedOperandSegments<
+                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                DenseI32ArrayAttr::get(op->getContext(), sizes.drop_back()));
+  }
   if (version < 2) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
