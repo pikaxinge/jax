@@ -1775,6 +1775,67 @@ class OpsTest(PallasBaseTest):
 
     np.testing.assert_allclose(kernel(lhs, rhs), expected, atol=5e-6, rtol=5e-4)
 
+  @parameterized.product(
+      batch_size=(None, 1, 2),
+      transpose_rhs=(True, False),
+      dtype=(jnp.float32,),
+  )
+  def test_dot_general_with_1d_lhs(self, batch_size, transpose_rhs, dtype):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 28):
+      self.skipTest("Requires newer libtpu")
+
+    batch_shape = (batch_size,) if batch_size is not None else ()
+    batch_dim = [0] if batch_size else []
+    k = 256
+    m = 1024
+    lhs_shape = (*batch_shape, k)
+    rhs_shape = (*batch_shape, m, k) if transpose_rhs else (*batch_shape, k, m)
+    k1, k2 = random.split(jax.random.key(0))
+    lhs = (
+        jax.random.normal(k1, lhs_shape, dtype=dtype)
+        .astype(jnp.bfloat16)
+        .astype(dtype)
+    )
+    rhs = (
+        jax.random.normal(k2, rhs_shape, dtype=dtype)
+        .astype(jnp.bfloat16)
+        .astype(dtype)
+    )
+    dimension_numbers = (
+        (
+            [len(lhs_shape) - 1],
+            [len(rhs_shape) - 1 if transpose_rhs else len(rhs_shape) - 2],
+        ),
+        (batch_dim, batch_dim),
+    )
+    expected = jax.lax.dot_general(
+        lhs,
+        rhs,
+        dimension_numbers=dimension_numbers,
+        preferred_element_type=jnp.float32,
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, dtype),
+    )
+    def kernel(lhs_ref, rhs_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          lhs_ref[...],
+          rhs_ref[...],
+          dimension_numbers=dimension_numbers,
+          preferred_element_type=jnp.float32,
+      )
+
+    np.testing.assert_allclose(
+        kernel(lhs, rhs),
+        expected,
+        atol=5e-6,
+        rtol=5e-4,
+    )
+
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
